@@ -1,0 +1,105 @@
+#!/bin/sh
+
+set -e
+
+if [ -n "$BUILDPACK_DEBUG" ] ; then
+  set -x
+fi
+
+BUILD_DIR=$1
+APT_DIR=$BUILD_DIR/.apt
+VENDOR_DIR="$BUILD_DIR/vendor"
+mkdir -p $VENDOR_DIR
+INSTALL_DIR="$VENDOR_DIR/libreoffice"
+mkdir -p $INSTALL_DIR
+CACHE_DIR=$2 # the contents of CACHE_DIR are persisted between builds
+ENV_DIR=$3
+
+install_jvm() {
+  local build_dir="$1"
+  local cache_dir="$2"
+  local env_dir="$3"
+
+  echo "Install JVM"
+
+  echo "java.runtime.version=${JAVA_VERSION:-11}" > "${build_dir}/system.properties"
+
+  jvm_buildpack_dir=$(mktemp jvm_buildpack_XXXX)
+  # only the name is interesting, deleting the temp empty file
+  rm "$jvm_buildpack_dir"
+
+  JVM_BUILDPACK_URL="${JVM_BUILDPACK_URL:-https://github.com/Scalingo/buildpack-jvm-common}"
+  git clone --depth=1 "$JVM_BUILDPACK_URL" "$jvm_buildpack_dir"
+
+  "${jvm_buildpack_dir}/bin/compile" "$build_dir" "$cache_dir" "$env_dir"
+
+  rm -r "$jvm_buildpack_dir"
+}
+
+install_apt_deps() {
+  local build_dir="$1"
+  local cache_dir="$2"
+  local env_dir="$3"
+
+  echo "Install dependencies with APT buildpack"
+
+  cat >> $build_dir/Aptfile <<EOF
+libsm6
+libice6
+libxinerama1
+libdbus-glib-1-2
+libharfbuzz0b
+libharfbuzz-icu0
+libx11-xcb1
+libxcb1
+EOF
+
+  apt_deps_buildpack_dir=$(mktemp apt_buildpack_XXXX)
+  # only the name is interesting, deleting the temp empty file
+  rm "$apt_deps_buildpack_dir"
+
+  APT_BUILDPACK_URL="${APT_BUILDPACK_URL:-https://github.com/Scalingo/apt-buildpack}"
+  git clone --depth=1 "$APT_BUILDPACK_URL" "$apt_deps_buildpack_dir"
+
+  "${apt_deps_buildpack_dir}/bin/compile" "$build_dir" "$cache_dir" "$env_dir"
+
+  rm -r "$apt_deps_buildpack_dir"
+}
+
+install_jvm "$BUILD_DIR" "$CACHE_DIR" "$ENV_DIR"
+install_apt_deps "$BUILD_DIR" "$CACHE_DIR" "$ENV_DIR"
+
+# libreoffice
+DOWNLOAD="https://appimages.libreitalia.org/LibreOffice-24.8.2.1.full-x86_64.AppImage"
+VERSION=$(echo $DOWNLOAD | grep -Poi "(?<=LibreOffice-)[^/]+(?=\.AppImage)")
+VERSION=${VERSION:-default} # avoid empty version if the grep fails to match
+FILE_NAME=LibreOffice-${VERSION}.AppImage
+
+mkdir -p $CACHE_DIR
+if ! [ -e $CACHE_DIR/$FILE_NAME ]; then
+  echo "-----> downloading LibreOffice AppImage"
+  curl -L $DOWNLOAD > $CACHE_DIR/$FILE_NAME
+
+  echo "-----> extracting LibreOffice from AppImage archive"
+  cd $CACHE_DIR
+  chmod a+x $FILE_NAME
+  ./$FILE_NAME --appimage-extract
+  mv squashfs-root "libreoffice-${VERSION}"
+
+  INSTALLED_VERSION=$(ls "${CACHE_DIR}/libreoffice-${VERSION}/opt")
+  cd "${CACHE_DIR}/libreoffice-${VERSION}/usr/bin"
+  [ -e "./libreoffice" ] || ln -s "${INSTALLED_VERSION}" libreoffice
+  cd $BUILD_DIR
+else
+  echo "file already exists $CACHE_DIR/$FILE_NAME"
+fi
+
+cp -R $CACHE_DIR/libreoffice-${VERSION}/usr $INSTALL_DIR
+cp -R $CACHE_DIR/libreoffice-${VERSION}/opt $INSTALL_DIR
+
+PROFILE_PATH="$BUILD_DIR/.profile.d/libreoffice.sh"
+RUNTIME_INSTALL_PATH="\$HOME/vendor/libreoffice"
+INSTALLED_VERSION=$(ls $INSTALL_DIR/opt)
+mkdir -p $(dirname $PROFILE_PATH)
+echo "export PATH=$RUNTIME_INSTALL_PATH/usr/bin:$RUNTIME_INSTALL_PATH/opt/$INSTALLED_VERSION/program:\$PATH" >> $PROFILE_PATH
+echo "export OFFICE_PATH=$RUNTIME_INSTALL_PATH/opt/$INSTALLED_VERSION" >> $PROFILE_PATH
