@@ -70,7 +70,7 @@ install_jvm "$BUILD_DIR" "$CACHE_DIR" "$ENV_DIR"
 install_apt_deps "$BUILD_DIR" "$CACHE_DIR" "$ENV_DIR"
 
 # libreoffice
-DOWNLOAD="https://appimages.libreitalia.org/LibreOffice-24.8.2.1.full-x86_64.AppImage"
+DOWNLOAD="https://appimages.libreitalia.org/LibreOffice-7.3.4.2.full-x86_64.AppImage"
 VERSION=$(echo $DOWNLOAD | grep -Poi "(?<=LibreOffice-)[^/]+(?=\.AppImage)")
 VERSION=${VERSION:-default} # avoid empty version if the grep fails to match
 FILE_NAME=LibreOffice-${VERSION}.AppImage
